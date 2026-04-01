@@ -1,0 +1,26 @@
+{
+  "test_loss": 0.0003352509309546253,
+  "coverage_rate": 0.013634046890927625,
+  "coverage_error": 0.0036340468909276252,
+  "avg_exceedance_loss": 0.005564720369875431,
+  "mean_var": -0.0234011672437191,
+  "mean_es": -0.026266278699040413,
+  "mean_y": 0.0005456210346892476,
+  "std_y": 0.011694022454321384,
+  "config": {
+    "dataset": "industry12",
+    "portfolio": "equal_weight",
+    "model": "flatten_mlp",
+    "alpha": 0.01,
+    "lookback": 60,
+    "vol_lookback": 20,
+    "min_assets": 5,
+    "batch_size": 256,
+    "num_workers": 4,
+    "max_epochs": 50,
+    "patience": 10,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "seed": 42
+  }
+}

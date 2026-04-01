@@ -1,0 +1,26 @@
+{
+  "test_loss": 0.0003334866282418579,
+  "coverage_rate": 0.01134046890927625,
+  "coverage_error": 0.001340468909276249,
+  "avg_exceedance_loss": 0.006486987229436636,
+  "mean_var": -0.02300698682665825,
+  "mean_es": -0.02974778413772583,
+  "mean_y": 0.0005633484688587487,
+  "std_y": 0.011412269435822964,
+  "config": {
+    "dataset": "industry49",
+    "portfolio": "vol_scaled",
+    "model": "set_attention",
+    "alpha": 0.01,
+    "lookback": 60,
+    "vol_lookback": 20,
+    "min_assets": 5,
+    "batch_size": 256,
+    "num_workers": 4,
+    "max_epochs": 50,
+    "patience": 10,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "seed": 42
+  }
+}
