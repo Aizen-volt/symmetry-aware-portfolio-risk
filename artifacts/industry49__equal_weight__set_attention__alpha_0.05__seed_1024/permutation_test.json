@@ -1,0 +1,16 @@
+{
+  "var_drift": {
+    "mean_abs_drift": 4.9105314259279e-10,
+    "median_abs_drift": 0.0,
+    "max_abs_drift": 2.9802322387695312e-08
+  },
+  "es_drift": {
+    "mean_abs_drift": 7.886749586738517e-10,
+    "median_abs_drift": 0.0,
+    "max_abs_drift": 2.9802322387695312e-08
+  },
+  "n_perm": 100,
+  "dataset": "industry49",
+  "portfolio": "equal_weight",
+  "model": "set_attention"
+}

@@ -1,265 +1,222 @@
-﻿from __future__ import annotations
+"""
+Aggregate results from multi-seed experiments, compute mean +/- std,
+and produce paper-ready LaTeX tables.
+
+Usage:
+    python -m src.experiments.aggregate_results
+"""
+from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 
 ARTIFACTS_DIR = Path("artifacts")
-OUTPUT_CSV = ARTIFACTS_DIR / "results_summary.csv"
-OUTPUT_TEX = ARTIFACTS_DIR / "results_summary.tex"
-OUTPUT_MD = ARTIFACTS_DIR / "results_summary.md"
 
 
-def safe_read_json(path: Path) -> dict[str, Any] | None:
+def safe_read_json(path: Path) -> dict | None:
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def parse_run_dir_name(run_dir_name: str) -> dict[str, Any]:
+def parse_run_dir_name(name: str) -> dict[str, Any] | None:
     """
-    Expected format:
-      dataset__portfolio__model__alpha_0.05
+    Parse:
+      dataset__portfolio__model__alpha_0.05__seed_42
+      dataset__portfolio__historical_sim__alpha_0.05
     """
-    parts = run_dir_name.split("__")
-    if len(parts) != 4:
-        raise ValueError(f"Unexpected run directory format: {run_dir_name}")
+    parts = name.split("__")
 
-    dataset, portfolio, model, alpha_part = parts
-    if not alpha_part.startswith("alpha_"):
-        raise ValueError(f"Unexpected alpha format in: {run_dir_name}")
+    if len(parts) == 5:
+        dataset, portfolio, model, alpha_part, seed_part = parts
+        alpha = float(alpha_part.replace("alpha_", ""))
+        seed = int(seed_part.replace("seed_", ""))
+        return {"dataset": dataset, "portfolio": portfolio, "model": model, "alpha": alpha, "seed": seed}
 
-    alpha = float(alpha_part.replace("alpha_", ""))
+    if len(parts) == 4:
+        dataset, portfolio, model, alpha_part = parts
+        alpha = float(alpha_part.replace("alpha_", ""))
+        return {"dataset": dataset, "portfolio": portfolio, "model": model, "alpha": alpha, "seed": None}
 
-    return {
-        "dataset": dataset,
-        "portfolio": portfolio,
-        "model": model,
-        "alpha": alpha,
-    }
+    return None
 
 
-def extract_metrics_row(run_dir: Path) -> dict[str, Any] | None:
-    metrics_path = run_dir / "metrics.json"
-    perm_path = run_dir / "permutation_test.json"
-
-    metrics = safe_read_json(metrics_path)
-    if metrics is None:
-        return None
-
-    row = parse_run_dir_name(run_dir.name)
-
-    row["run_dir"] = str(run_dir)
-    row["has_metrics"] = True
-    row["has_permutation_test"] = perm_path.exists()
-
-    # Main experiment metrics
-    row["test_loss"] = metrics.get("test_loss")
-    row["coverage_rate"] = metrics.get("coverage_rate")
-    row["coverage_error"] = metrics.get("coverage_error")
-    row["avg_exceedance_loss"] = metrics.get("avg_exceedance_loss")
-    row["mean_var"] = metrics.get("mean_var")
-    row["mean_es"] = metrics.get("mean_es")
-    row["mean_y"] = metrics.get("mean_y")
-    row["std_y"] = metrics.get("std_y")
-
-    # Optional config echo
-    config = metrics.get("config", {})
-    row["lookback"] = config.get("lookback")
-    row["vol_lookback"] = config.get("vol_lookback")
-    row["min_assets"] = config.get("min_assets")
-    row["batch_size"] = config.get("batch_size")
-    row["seed"] = config.get("seed")
-
-    # Permutation stats if available
-    perm = safe_read_json(perm_path)
-    if perm is not None:
-        var_drift = perm.get("var_drift", {})
-        es_drift = perm.get("es_drift", {})
-
-        row["var_perm_mean_drift"] = var_drift.get("mean_abs_drift")
-        row["var_perm_median_drift"] = var_drift.get("median_abs_drift")
-        row["var_perm_max_drift"] = var_drift.get("max_abs_drift")
-
-        row["es_perm_mean_drift"] = es_drift.get("mean_abs_drift")
-        row["es_perm_median_drift"] = es_drift.get("median_abs_drift")
-        row["es_perm_max_drift"] = es_drift.get("max_abs_drift")
-
-        row["n_perm"] = perm.get("n_perm")
-    else:
-        row["var_perm_mean_drift"] = None
-        row["var_perm_median_drift"] = None
-        row["var_perm_max_drift"] = None
-        row["es_perm_mean_drift"] = None
-        row["es_perm_median_drift"] = None
-        row["es_perm_max_drift"] = None
-        row["n_perm"] = None
-
-    return row
-
-
-def collect_results(artifacts_dir: Path) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-
-    if not artifacts_dir.exists():
-        raise FileNotFoundError(f"Artifacts directory not found: {artifacts_dir.resolve()}")
-
+def collect_all_results(artifacts_dir: Path) -> pd.DataFrame:
+    rows = []
     for run_dir in sorted(artifacts_dir.iterdir()):
-        if not run_dir.is_dir():
-            continue
-        if "__" not in run_dir.name:
+        if not run_dir.is_dir() or "__" not in run_dir.name:
             continue
 
-        try:
-            row = extract_metrics_row(run_dir)
-        except Exception as e:
-            print(f"Skipping {run_dir.name}: {e}")
+        parsed = parse_run_dir_name(run_dir.name)
+        if parsed is None:
             continue
 
-        if row is not None:
-            rows.append(row)
+        metrics = safe_read_json(run_dir / "metrics.json")
+        if metrics is None:
+            continue
 
-    if not rows:
-        raise RuntimeError(f"No valid run results found in: {artifacts_dir.resolve()}")
+        row = {**parsed}
+        for key in ["test_loss", "coverage_rate", "coverage_error", "avg_exceedance_loss",
+                     "mean_var", "mean_es", "uc_stat", "uc_p_value", "cc_stat", "cc_p_value",
+                     "n_train", "n_val", "n_test", "n_total", "date_start", "date_end"]:
+            row[key] = metrics.get(key)
 
-    df = pd.DataFrame(rows)
+        perm = safe_read_json(run_dir / "permutation_test.json")
+        if perm:
+            row["var_perm_mean_drift"] = perm.get("var_drift", {}).get("mean_abs_drift")
+            row["var_perm_max_drift"] = perm.get("var_drift", {}).get("max_abs_drift")
+            row["es_perm_mean_drift"] = perm.get("es_drift", {}).get("mean_abs_drift")
+            row["es_perm_max_drift"] = perm.get("es_drift", {}).get("max_abs_drift")
+            row["n_perm"] = perm.get("n_perm")
 
-    sort_cols = ["alpha", "dataset", "portfolio", "model"]
-    df = df.sort_values(sort_cols).reset_index(drop=True)
+        row["run_dir"] = str(run_dir)
+        rows.append(row)
 
-    preferred_cols = [
-        "dataset",
-        "portfolio",
-        "alpha",
-        "model",
-        "test_loss",
-        "coverage_rate",
-        "coverage_error",
-        "avg_exceedance_loss",
-        "mean_var",
-        "mean_es",
-        "var_perm_mean_drift",
-        "var_perm_median_drift",
-        "var_perm_max_drift",
-        "es_perm_mean_drift",
-        "es_perm_median_drift",
-        "es_perm_max_drift",
-        "n_perm",
-        "lookback",
-        "vol_lookback",
-        "min_assets",
-        "batch_size",
-        "seed",
-        "has_metrics",
-        "has_permutation_test",
-        "run_dir",
-    ]
-
-    existing_cols = [c for c in preferred_cols if c in df.columns]
-    remaining_cols = [c for c in df.columns if c not in existing_cols]
-    df = df[existing_cols + remaining_cols]
-
-    return df
+    return pd.DataFrame(rows)
 
 
-def build_forecasting_table(df: pd.DataFrame) -> pd.DataFrame:
-    cols = [
-        "dataset",
-        "portfolio",
-        "alpha",
-        "model",
-        "test_loss",
-        "coverage_error",
-        "avg_exceedance_loss",
-        "coverage_rate",
-        "mean_var",
-        "mean_es",
-    ]
-    cols = [c for c in cols if c in df.columns]
-    out = df[cols].copy()
-    return out.sort_values(["alpha", "dataset", "portfolio", "model"]).reset_index(drop=True)
+def compute_multi_seed_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Group by (dataset, portfolio, model, alpha), compute mean ± std across seeds."""
+    group_cols = ["dataset", "portfolio", "model", "alpha"]
+    metric_cols = ["test_loss", "coverage_error", "avg_exceedance_loss",
+                   "var_perm_mean_drift", "var_perm_max_drift",
+                   "es_perm_mean_drift", "es_perm_max_drift",
+                   "uc_p_value", "cc_p_value"]
+
+    existing_metrics = [c for c in metric_cols if c in df.columns]
+
+    agg_dict = {}
+    for col in existing_metrics:
+        agg_dict[col] = ["mean", "std", "count"]
+
+    # Also keep first values of non-aggregated columns
+    for col in ["n_train", "n_val", "n_test", "n_total", "date_start", "date_end"]:
+        if col in df.columns:
+            agg_dict[col] = "first"
+
+    grouped = df.groupby(group_cols, as_index=False).agg(agg_dict)
+    grouped.columns = ["_".join(c).strip("_") if isinstance(c, tuple) else c for c in grouped.columns]
+
+    return grouped
 
 
-def build_permutation_table(df: pd.DataFrame) -> pd.DataFrame:
-    cols = [
-        "dataset",
-        "portfolio",
-        "alpha",
-        "model",
-        "var_perm_mean_drift",
-        "var_perm_median_drift",
-        "var_perm_max_drift",
-        "es_perm_mean_drift",
-        "es_perm_median_drift",
-        "es_perm_max_drift",
-    ]
-    cols = [c for c in cols if c in df.columns]
-    out = df[cols].copy()
-    return out.sort_values(["alpha", "dataset", "portfolio", "model"]).reset_index(drop=True)
+def format_mean_std(mean_val, std_val, fmt=".4f") -> str:
+    if pd.isna(mean_val):
+        return "—"
+    if pd.isna(std_val) or std_val == 0:
+        return f"{mean_val:{fmt}}"
+    return f"{mean_val:{fmt}} ± {std_val:{fmt}}"
 
 
-def format_numeric_for_display(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    for col in out.columns:
-        if pd.api.types.is_numeric_dtype(out[col]):
-            out[col] = out[col].map(
-                lambda x: (
-                    ""
-                    if pd.isna(x)
-                    else f"{x:.6g}" if abs(float(x)) < 1e-3 or abs(float(x)) >= 1e3
-                    else f"{x:.6f}"
-                )
-            )
-    return out
+def format_sci_mean_std(mean_val, std_val) -> str:
+    if pd.isna(mean_val):
+        return "—"
+    if mean_val < 1e-6:
+        return f"{mean_val:.2e}"
+    if pd.isna(std_val) or std_val == 0:
+        return f"{mean_val:.4f}"
+    return f"{mean_val:.4f} ± {std_val:.4f}"
 
 
-def dataframe_to_markdown(df: pd.DataFrame, title: str) -> str:
-    disp = format_numeric_for_display(df)
-    lines = [f"# {title}", "", disp.to_markdown(index=False), ""]
+def build_paper_forecasting_table(summary: pd.DataFrame) -> str:
+    """Build consolidated LaTeX forecasting table."""
+    lines = []
+    lines.append(r"\begin{table}[H]")
+    lines.append(r"\caption{Forecasting results across all configurations (mean $\pm$ std over 5 seeds). Lower is better for all metrics. HS = Historical Simulation baseline.}\label{tab:forecast_all}")
+    lines.append(r"\small")
+    lines.append(r"\begin{tabularx}{\textwidth}{llllCCCC}")
+    lines.append(r"\toprule")
+    lines.append(r"Dataset & Portfolio & $\alpha$ & Model & Test Loss & Coverage Error & Avg.\ Exc.\ Loss & UC $p$ \\")
+    lines.append(r"\midrule")
+
+    for _, row in summary.iterrows():
+        ds = row["dataset"].replace("industry", "Ind")
+        pf = "EW" if row["portfolio"] == "equal_weight" else "VS"
+        alpha = f"{row['alpha']:.2f}"
+        model = row["model"].replace("flatten_mlp", "Flatten-MLP").replace("set_attention", "Set-Attention").replace("historical_sim", "Hist.~Sim.")
+
+        tl = format_mean_std(row.get("test_loss_mean"), row.get("test_loss_std"), ".6f")
+        ce = format_mean_std(row.get("coverage_error_mean"), row.get("coverage_error_std"), ".4f")
+        ae = format_mean_std(row.get("avg_exceedance_loss_mean"), row.get("avg_exceedance_loss_std"), ".4f")
+        uc = format_mean_std(row.get("uc_p_value_mean"), row.get("uc_p_value_std"), ".3f")
+
+        lines.append(f"{ds} & {pf} & {alpha} & {model} & {tl} & {ce} & {ae} & {uc} \\\\")
+
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabularx}")
+    lines.append(r"\end{table}")
     return "\n".join(lines)
 
 
-def save_latex_table(df: pd.DataFrame, path: Path) -> None:
-    disp = format_numeric_for_display(df)
-    latex = disp.to_latex(index=False, escape=False)
-    path.write_text(latex, encoding="utf-8")
+def build_paper_permutation_table(summary: pd.DataFrame) -> str:
+    """Build consolidated LaTeX permutation table."""
+    # Filter to neural models only (HS has no permutation test)
+    neural = summary[summary["model"] != "historical_sim"].copy()
+
+    lines = []
+    lines.append(r"\begin{table}[H]")
+    lines.append(r"\caption{Permutation robustness across all configurations (mean over 5 seeds, 100 permutations each). Lower is better.}\label{tab:perm_all}")
+    lines.append(r"\small")
+    lines.append(r"\begin{tabularx}{\textwidth}{llllCCCC}")
+    lines.append(r"\toprule")
+    lines.append(r"Dataset & Portfolio & $\alpha$ & Model & Mean VaR Drift & Max VaR Drift & Mean ES Drift & Max ES Drift \\")
+    lines.append(r"\midrule")
+
+    for _, row in neural.iterrows():
+        ds = row["dataset"].replace("industry", "Ind")
+        pf = "EW" if row["portfolio"] == "equal_weight" else "VS"
+        alpha = f"{row['alpha']:.2f}"
+        model = row["model"].replace("flatten_mlp", "Flatten-MLP").replace("set_attention", "Set-Attention")
+
+        vmd = format_sci_mean_std(row.get("var_perm_mean_drift_mean"), row.get("var_perm_mean_drift_std"))
+        vmx = format_sci_mean_std(row.get("var_perm_max_drift_mean"), row.get("var_perm_max_drift_std"))
+        emd = format_sci_mean_std(row.get("es_perm_mean_drift_mean"), row.get("es_perm_mean_drift_std"))
+        emx = format_sci_mean_std(row.get("es_perm_max_drift_mean"), row.get("es_perm_max_drift_std"))
+
+        lines.append(f"{ds} & {pf} & {alpha} & {model} & {vmd} & {vmx} & {emd} & {emx} \\\\")
+
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabularx}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
 
 
 def main() -> None:
-    df = collect_results(ARTIFACTS_DIR)
+    df = collect_all_results(ARTIFACTS_DIR)
+    if df.empty:
+        print("No results found.")
+        return
 
-    # Full summary
-    df.to_csv(OUTPUT_CSV, index=False)
+    df.to_csv(ARTIFACTS_DIR / "all_runs.csv", index=False)
 
-    # Main paper-facing tables
-    forecasting_df = build_forecasting_table(df)
-    permutation_df = build_permutation_table(df)
+    summary = compute_multi_seed_summary(df)
+    summary.to_csv(ARTIFACTS_DIR / "multi_seed_summary.csv", index=False)
 
-    # Save one combined markdown report
-    md_parts = [
-        dataframe_to_markdown(df, "Full Results Summary"),
-        dataframe_to_markdown(forecasting_df, "Forecasting Metrics"),
-        dataframe_to_markdown(permutation_df, "Permutation Robustness Metrics"),
-    ]
-    OUTPUT_MD.write_text("\n".join(md_parts), encoding="utf-8")
+    # Generate LaTeX tables
+    forecast_tex = build_paper_forecasting_table(summary)
+    perm_tex = build_paper_permutation_table(summary)
 
-    # Save LaTeX from full summary by default
-    save_latex_table(df, OUTPUT_TEX)
+    (ARTIFACTS_DIR / "table_forecasting.tex").write_text(forecast_tex)
+    (ARTIFACTS_DIR / "table_permutation.tex").write_text(perm_tex)
 
-    print(f"Saved CSV : {OUTPUT_CSV.resolve()}")
-    print(f"Saved TEX : {OUTPUT_TEX.resolve()}")
-    print(f"Saved MD  : {OUTPUT_MD.resolve()}")
+    print(f"Total runs: {len(df)}")
+    print(f"Unique configs: {len(summary)}")
+    print(f"Saved: all_runs.csv, multi_seed_summary.csv, table_forecasting.tex, table_permutation.tex")
 
-    print("\nForecasting table preview:")
-    print(format_numeric_for_display(forecasting_df).to_string(index=False))
-
-    print("\nPermutation table preview:")
-    print(format_numeric_for_display(permutation_df).to_string(index=False))
+    # Print summary
+    print("\nForecasting summary:")
+    cols = ["dataset", "portfolio", "alpha", "model"]
+    for c in ["test_loss_mean", "test_loss_std", "coverage_error_mean", "avg_exceedance_loss_mean"]:
+        if c in summary.columns:
+            cols.append(c)
+    print(summary[cols].to_string(index=False))
 
 
 if __name__ == "__main__":

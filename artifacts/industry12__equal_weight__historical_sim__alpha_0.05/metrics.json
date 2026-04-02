@@ -1,0 +1,20 @@
+{
+  "coverage_rate": 0.052551020408163264,
+  "coverage_error": 0.002551020408163261,
+  "avg_exceedance_loss": 0.009120827265372168,
+  "mean_var": -0.017526311224489794,
+  "mean_es": -0.025485778435000366,
+  "n_test": 3920,
+  "n_total": 26130,
+  "mean_y": 0.0005035289115646257,
+  "std_y": 0.011734604224846696,
+  "uc_stat": 0.5286188529053106,
+  "uc_p_value": 0.46718810181744264,
+  "cc_stat": 22.585673796643277,
+  "cc_p_value": 1.2461870963154098e-05,
+  "dataset": "industry12",
+  "portfolio": "equal_weight",
+  "alpha": 0.05,
+  "model": "historical_sim",
+  "window": 250
+}

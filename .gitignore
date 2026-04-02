@@ -1,6 +1,12 @@
-﻿/.venv/
+/.venv/
 /data/
 /.idea/
-/artifacts/*/model.pt
-/artifacts/*/test_predictions.csv
+__pycache__/
+*.pyc
+artifacts/*/model.pt
+artifacts/*/test_predictions.csv
+*.egg-info/
+dist/
+build/
+.DS_Store
 /paper/
